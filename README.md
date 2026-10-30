@@ -29,6 +29,8 @@ GitHub 事件 → POST /webhook → 验签 → 查 delivery 去重 → 回 202
   在 system prompt 里明确告诉模型：那是问题，不是指令。
 - **模型挂了不算 5xx**：异常吞掉记日志，否则 GitHub 会重投，一样是重复评论。
 - **跳过 Bot 事件**：不然机器人回的评论会再触发机器人，无限套娃。
+- **回帖前先看一眼**：重投（或同一 issue 的重复触发）不该刷出第二条评论，
+  所以发帖前先按评论里的 `<!-- githubaibot:v1 -->` 标记查一次，查过了就跳过。
 
 ## 跑起来
 
@@ -81,7 +83,16 @@ curl -s -X POST http://127.0.0.1:8000/webhook \
   -d "$BODY"
 ```
 
-返回 `{"status":"accepted","event":"issues"}`，终端里能看到 dry-run 打算发的评论。
+返回 `{"status":"accepted","event":"issues"}`，终端里能看到 dry-run 打算发的评论和标签。
+注意 `DRY_RUN` 只挡住发帖，模型照样会调——没有 key 时会看到一条"分诊失败"的日志。
+
+### 5. 跑测试
+
+```bash
+python -m pytest -q
+```
+
+不联网、不调模型，只验证验签、按 delivery 去重、以及 issue 事件确实派到了分诊。
 
 ## 代码结构
 
@@ -92,7 +103,20 @@ bot/
   github_api.py   App JWT → installation token → 评论/打标签/取 diff
   llm.py          OpenAI 兼容接口的一层薄封装
   tasks.py        分诊和评审的 prompt 与流程
+tests/
+  test_smoke.py   三个不过网的冒烟用例
 ```
 
 四个文件各管一件事，加新事件（比如 `@bot` 提问回复）就在 `tasks.py` 加个函数、
 在 `server.py` 多一个分支。
+
+## 已经核对过的几点（2026-10）
+
+对着 GitHub 官方实践和别人的踩坑记录复查了一遍，上面那些设计都还站得住，另外记两条：
+
+- **installation token 的格式在变**：GitHub 从 2026-04 开始分阶段换成 `ghs_<AppID>_<JWT>`
+  这种无状态格式。凡是假设 token 固定 40 字符的代码会挂，本仓库没这个假设，
+  但如果你接了别的 SDK，值得回去查一眼。
+- **别在 import 时去换 token**：进程冷启动（serverless、容器缩到零）时那笔网络往返
+  可能拖到超时，而且缓存里的 token 醒来就没了。这里是在第一次发帖时才换，
+  过期前 5 分钟续，没换成功就让它失败、等 GitHub 重投。

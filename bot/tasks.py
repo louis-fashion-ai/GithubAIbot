@@ -46,18 +46,18 @@ def triage_issue(gh, cfg, repo: str, issue: dict) -> None:
     user = f"候选标签：{', '.join(cfg.labels)}\n\n标题：{issue['title']}\n\n正文：{body}"
     try:
         out = _parse_json(llm.chat(cfg, TRIAGE_SYSTEM, user[:6000]))
+        labels = [x for x in out.get("labels") or [] if x in cfg.labels][:2]
+        reply = (out.get("reply") or "").strip()
+        if not reply:
+            return
+        if gh.already_commented(repo, number, MARKER):
+            log.info("已经回过 %s#%s，跳过", repo, number)
+            return
+        gh.add_labels(repo, number, labels)
+        gh.comment(repo, number, f"{reply}\n\n{MARKER}")
     except Exception as e:
         # 模型挂了不能让 webhook 返回 5xx，否则 GitHub 会重试
         log.exception("分诊失败 %s#%s：%s", repo, number, e)
-        return
-
-    labels = [x for x in out.get("labels", []) if x in cfg.labels]
-    reply = out.get("reply", "").strip()
-    if not reply:
-        return
-
-    gh.add_labels(repo, number, labels)
-    gh.comment(repo, number, f"{reply}\n\n{MARKER}")
 
 
 def review_pr(gh, cfg, repo: str, pr: dict) -> None:
@@ -65,7 +65,9 @@ def review_pr(gh, cfg, repo: str, pr: dict) -> None:
     try:
         diff = gh.pr_diff(repo, number)
         summary = llm.chat(cfg, REVIEW_SYSTEM, f"PR 标题：{pr['title']}\n\n{diff}")
+        if gh.already_commented(repo, number, MARKER):
+            log.info("已经评过 %s#%s，跳过", repo, number)
+            return
+        gh.comment(repo, number, f"### AI 评审摘要\n\n{summary}\n\n{MARKER}")
     except Exception as e:
         log.exception("评审失败 %s#%s：%s", repo, number, e)
-        return
-    gh.comment(repo, number, f"### AI 评审摘要\n\n{summary}\n\n{MARKER}")

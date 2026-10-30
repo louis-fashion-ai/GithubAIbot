@@ -66,10 +66,25 @@ class GitHub:
         self._post(f"/repos/{repo}/issues/{number}/comments", {"body": body})
 
     def add_labels(self, repo: str, number: int, labels: list) -> None:
-        if self.cfg.dry_run or not labels:
+        if not labels:
+            return
+        if self.cfg.dry_run:
             print(f"[dry-run] labels {repo}#{number} -> {labels}")
             return
         self._post(f"/repos/{repo}/issues/{number}/labels", {"labels": labels})
+
+    def already_commented(self, repo: str, number: int, marker: str) -> bool:
+        """重投（或对同一 issue 的重复触发）不该刷出第二条评论。查一次比事后删容易。"""
+        if self.cfg.dry_run:
+            return False
+        r = httpx.get(
+            f"{API}/repos/{repo}/issues/{number}/comments",
+            headers={**HEADERS, "Authorization": f"Bearer {self.token()}"},
+            params={"per_page": 100},
+            timeout=30,
+        )
+        r.raise_for_status()
+        return any(marker in c.get("body", "") for c in r.json())
 
     def pr_diff(self, repo: str, number: int) -> str:
         r = httpx.get(
