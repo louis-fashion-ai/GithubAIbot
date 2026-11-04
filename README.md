@@ -31,6 +31,8 @@ GitHub 事件 → POST /webhook → 验签 → 查 delivery 去重 → 回 202
 - **跳过 Bot 事件**：不然机器人回的评论会再触发机器人，无限套娃。
 - **回帖前先看一眼**：重投（或同一 issue 的重复触发）不该刷出第二条评论，
   所以发帖前先按评论里的 `<!-- githubaibot:v1 -->` 标记查一次，查过了就跳过。
+- **打标签失败不挡回帖**：仓库里没建这个标签、或者权限没给全，GitHub 直接返 422。
+  标签是锦上添花，回帖才是主功能，所以那一步单独 try 掉，只记一条 warning。
 
 ## 跑起来
 
@@ -69,22 +71,18 @@ npx smee-client --url https://smee.io/你的频道 --target http://127.0.0.1:800
 
 ### 4. 本地试一下（不真发帖）
 
-`.env` 里设 `DRY_RUN=1`，然后手搓一个签名请求：
+`.env` 里设 `DRY_RUN=1`，然后发一条签名正确的假事件：
 
 ```bash
-SECRET=你配的secret
-BODY='{"action":"opened","repository":{"full_name":"you/repo"},"issue":{"number":1,"title":"启动就报 500","body":"日志里只有一行 error"},"sender":{"type":"User"}}'
-SIG="sha256=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')"
-curl -s -X POST http://127.0.0.1:8000/webhook \
-  -H "Content-Type: application/json" \
-  -H "X-GitHub-Event: issues" \
-  -H "X-GitHub-Delivery: test-1" \
-  -H "X-Hub-Signature-256: $SIG" \
-  -d "$BODY"
+GITHUB_WEBHOOK_SECRET=你配的secret python scripts/dev_webhook.py      # issue
+GITHUB_WEBHOOK_SECRET=你配的secret python scripts/dev_webhook.py pr   # PR
 ```
 
-返回 `{"status":"accepted","event":"issues"}`，终端里能看到 dry-run 打算发的评论和标签。
+返回 `{"status":"accepted",...}`，终端里能看到 dry-run 打算发的评论和标签。
+脚本每次用新的 delivery id；想验去重，把打印出来的 id 用 `DELIVERY_ID=...` 再发一次即可。
+
 注意 `DRY_RUN` 只挡住发帖，模型照样会调——没有 key 时会看到一条"分诊失败"的日志。
+PR 那条路还要先换 installation token 才能拉 diff，所以私钥得是真的。
 
 ### 5. 跑测试
 
@@ -103,8 +101,10 @@ bot/
   github_api.py   App JWT → installation token → 评论/打标签/取 diff
   llm.py          OpenAI 兼容接口的一层薄封装
   tasks.py        分诊和评审的 prompt 与流程
+scripts/
+  dev_webhook.py  发一条签名正确的假事件，本地联调用
 tests/
-  test_smoke.py   三个不过网的冒烟用例
+  test_smoke.py   四个不过网的用例
 ```
 
 四个文件各管一件事，加新事件（比如 `@bot` 提问回复）就在 `tasks.py` 加个函数、

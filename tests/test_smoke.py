@@ -60,6 +60,29 @@ def test_duplicate_delivery_is_skipped():
     assert post(raw).json() == {"skipped": "duplicate delivery"}
 
 
+def test_label_failure_still_posts_comment(monkeypatch):
+    """标签没建好不该连回帖一起吞掉——这条以前是整段 try 一起挂。"""
+    posted = []
+
+    class FakeGH:
+        def add_labels(self, *a):
+            raise RuntimeError("422: label does not exist")
+
+        def already_commented(self, *a):
+            return False
+
+        def comment(self, repo, number, body):
+            posted.append(body)
+
+    monkeypatch.setattr(
+        tasks.llm, "chat", lambda *a, **k: '{"labels": ["bug"], "reply": "收到"}'
+    )
+    cfg = type("Cfg", (), {"labels": ("bug",)})()
+    tasks.triage_issue(FakeGH(), cfg, "you/repo", {"number": 2, "title": "t", "body": "b"})
+
+    assert len(posted) == 1 and tasks.MARKER in posted[0]
+
+
 def test_issue_opened_dispatches_triage(monkeypatch):
     calls = []
     monkeypatch.setattr(tasks, "triage_issue", lambda *a: calls.append(a))

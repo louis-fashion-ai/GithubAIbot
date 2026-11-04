@@ -53,7 +53,12 @@ def triage_issue(gh, cfg, repo: str, issue: dict) -> None:
         if gh.already_commented(repo, number, MARKER):
             log.info("已经回过 %s#%s，跳过", repo, number)
             return
-        gh.add_labels(repo, number, labels)
+        try:
+            gh.add_labels(repo, number, labels)
+        except Exception:
+            # 仓库里没建这个标签、或权限没给全，GitHub 会返 422。
+            # 打标签是锦上添花，别让它把回帖一起带下水。
+            log.warning("打标签失败 %s#%s，继续回帖", repo, number)
         gh.comment(repo, number, f"{reply}\n\n{MARKER}")
     except Exception as e:
         # 模型挂了不能让 webhook 返回 5xx，否则 GitHub 会重试
