@@ -21,8 +21,8 @@ cfg = config.load()
 gh = github_api.GitHub(cfg)
 app = FastAPI(title="GithubAIbot")
 
-_seen: dict = {}             # delivery id -> 时间戳，防 GitHub 重投
-_TTL = 14 * 24 * 3600       # 覆盖 GitHub 的重试窗口再多留点余量
+_seen: dict = {}             # delivery id -> 时间戳，防重复投递
+_TTL = 14 * 24 * 3600       # 重投窗口只有 3 天，多留点余量够用了
 
 
 def verify(body: bytes, sig: str, secret: str) -> None:
@@ -65,7 +65,15 @@ async def webhook(request: Request, bg: BackgroundTasks):
     if payload.get("sender", {}).get("type") == "Bot":
         return {"skipped": "bot event"}
 
-    repo = payload["repository"]["full_name"]
+    # 建/改 webhook 时 GitHub 会立刻 ping 一下探活，installation 这类事件也不带 repository。
+    # 不早退的话下面取 full_name 直接 KeyError，GitHub 的 Recent deliveries 里就挂一条红的 500。
+    if event == "ping":
+        return {"pong": payload.get("zen", "")}
+
+    repo = (payload.get("repository") or {}).get("full_name")
+    if not repo:
+        return {"skipped": f"{event}: no repository"}
+
     opened = payload.get("action") == "opened"
     item = payload.get("issue") or payload.get("pull_request") or {}
 

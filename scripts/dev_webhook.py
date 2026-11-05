@@ -2,6 +2,7 @@
 
     python scripts/dev_webhook.py          # issue opened
     python scripts/dev_webhook.py pr       # pr opened
+    python scripts/dev_webhook.py ping     # 建 webhook 时 GitHub 发的那条探活
 
 密钥读 GITHUB_WEBHOOK_SECRET（默认 change-me），地址读 WEBHOOK_URL。
 每次跑用的是新的 delivery id，所以连跑两次不会被去重挡掉；
@@ -40,8 +41,17 @@ PR = {
 }
 
 
+PING = {"zen": "Keep it local.", "hook_id": 7, "hook": {"id": 7}}
+
+EVENTS = {
+    "issue": ("issues", ISSUE),
+    "pr": ("pull_request", PR),
+    "ping": ("ping", PING),   # 没有 repository，正好验服务不会 500
+}
+
+
 def main(kind: str) -> None:
-    event, payload = ("pull_request", PR) if kind == "pr" else ("issues", ISSUE)
+    event, payload = EVENTS.get(kind, ("issues", ISSUE))
     delivery = os.environ.get("DELIVERY_ID") or f"dev-{uuid.uuid4().hex[:8]}"
     # 签名必须对原始字节算，所以先 dumps 再发，中间不要再动它
     body = json.dumps(payload, ensure_ascii=False).encode()

@@ -60,6 +60,13 @@ def test_duplicate_delivery_is_skipped():
     assert post(raw).json() == {"skipped": "duplicate delivery"}
 
 
+def test_ping_does_not_500():
+    """建 webhook 时那条 ping 没有 repository，以前直接 KeyError 变成 500。"""
+    raw = json.dumps({"zen": "Design for failure.", "hook_id": 1}).encode()
+    r = post(raw, delivery="ping-1", event="ping")
+    assert r.status_code == 200 and r.json()["pong"] == "Design for failure."
+
+
 def test_label_failure_still_posts_comment(monkeypatch):
     """标签没建好不该连回帖一起吞掉——这条以前是整段 try 一起挂。"""
     posted = []
